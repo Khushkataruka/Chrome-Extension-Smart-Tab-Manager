@@ -47,7 +47,31 @@ saveApiKeyBtn.addEventListener('click', handleSaveConfig);
 modelSelector.addEventListener('change', updateSettingsVisibility);
 
 // --- Initialization ---
-loadSettings();
+async function init() {
+  await loadSettings();
+  
+  try {
+    const session = await chrome.storage.session.get(['cachedAnalysis', 'cachedTabsToClose', 'cachedAllTabs']);
+    if (session.cachedAnalysis) {
+      allTabs = session.cachedAllTabs || [];
+      tabsToClose = session.cachedTabsToClose || [];
+      
+      displayResults(session.cachedAnalysis);
+      
+      tabBadge.textContent = `${allTabs.length} tab${allTabs.length !== 1 ? 's' : ''}`;
+      tabBadge.classList.remove('hidden');
+      
+      if (tabsToClose.length > 0) {
+        closeBtn.disabled = false;
+        closeCountEl.textContent = tabsToClose.length;
+        closeInfoEl.classList.remove('hidden');
+      }
+    }
+  } catch (err) {
+    console.warn('Session storage not available:', err);
+  }
+}
+init();
 
 function toggleSettings() {
   settingsDrawer.classList.toggle('hidden');
@@ -144,6 +168,17 @@ async function handleAnalyze() {
       closeInfoEl.classList.remove('hidden');
     } else {
       closeInfoEl.classList.add('hidden');
+    }
+
+    // Cache the results until Chrome is closed
+    try {
+      await chrome.storage.session.set({
+        cachedAnalysis: analysis,
+        cachedTabsToClose: tabsToClose,
+        cachedAllTabs: allTabs
+      });
+    } catch (err) {
+      console.warn('Failed to cache analysis in session:', err);
     }
 
   } catch (error) {

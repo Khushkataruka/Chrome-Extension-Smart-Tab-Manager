@@ -262,6 +262,8 @@ ${tabList}`;
   const content = data.choices[0].message.content;
   const parsed = JSON.parse(content);
 
+  console.log(`  ✅ Groq successfully categorized ${tabs.length} tabs into ${parsed.groups?.length || 0} groups.`);
+
   return processAIResult(tabs, parsed, 'ai-groq');
 }
 
