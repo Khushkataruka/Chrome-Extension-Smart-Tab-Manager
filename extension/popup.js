@@ -1,7 +1,7 @@
 // Smart Tab Manager — Popup Logic
 // Handles tab analysis, display, and close operations
 
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'https://chrome-extension-smart-tab-manager.onrender.com';
 
 // --- DOM References ---
 const analyzeBtn = document.getElementById('analyzeBtn');
