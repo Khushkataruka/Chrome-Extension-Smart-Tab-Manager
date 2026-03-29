@@ -9,28 +9,20 @@ const closeBtn = document.getElementById('closeBtn');
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const errorTextEl = document.getElementById('errorText');
-const resultsEl = document.getElementById('results'); // This is the main container for results
-const groupsContainer = document.getElementById('groupsContainer'); // Specific container for tab groups
+const resultsEl = document.getElementById('results'); 
+const groupsContainer = document.getElementById('groupsContainer'); 
 const closeInfoEl = document.getElementById('closeInfo');
 const closeCountEl = document.getElementById('closeCount');
-const tabBadge = document.getElementById('tabBadge'); // Original tab badge
+const tabBadge = document.getElementById('tabBadge'); 
 const settingsBtn = document.getElementById('settingsBtn');
 const settingsDrawer = document.getElementById('settingsDrawer');
 const modelSelector = document.getElementById('modelSelector');
-const apiKeySection = document.getElementById('apiKeySection');
-const apiKeyInput = document.getElementById('apiKey');
-const ollamaUrlSection = document.getElementById('ollamaUrlSection');
-const ollamaUrlInput = document.getElementById('ollamaUrl');
-const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
 const settingsStatus = document.getElementById('settingsStatus');
 
 let tabsToClose = [];
-let allTabs = []; // cache of the last fetched tabs for favicon lookup
+let allTabs = []; 
 let currentSettings = {
-  provider: 'keywords',
-  geminiKey: '',
-  groqKey: '',
-  ollamaUrl: 'http://localhost:11434/api/generate'
+  provider: 'groq'
 };
 
 // --- Extension Context Check ---
@@ -43,8 +35,16 @@ if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMess
 analyzeBtn.addEventListener('click', handleAnalyze);
 closeBtn.addEventListener('click', handleCloseTabs);
 settingsBtn.addEventListener('click', toggleSettings);
-saveApiKeyBtn.addEventListener('click', handleSaveConfig);
-modelSelector.addEventListener('change', updateSettingsVisibility);
+
+modelSelector.addEventListener('change', async () => {
+  currentSettings.provider = modelSelector.value;
+  try {
+    await chrome.storage.local.set({ extensionSettings: currentSettings });
+    showSettingsStatus('Mode saved!', 'success');
+  } catch (error) {
+    showSettingsStatus('Failed to save.', 'error');
+  }
+});
 
 // --- Initialization ---
 async function init() {
@@ -77,50 +77,20 @@ function toggleSettings() {
   settingsDrawer.classList.toggle('hidden');
 }
 
-function updateSettingsVisibility() {
-  const provider = modelSelector.value;
-  
-  // Hide all sections first
-  apiKeySection.classList.add('hidden');
-  ollamaUrlSection.classList.add('hidden');
-
-  if (provider === 'gemini' || provider === 'groq') {
-    apiKeySection.classList.remove('hidden');
-    // Set placeholder contextually
-    apiKeyInput.placeholder = provider === 'gemini' ? 'Enter Gemini API Key...' : 'Enter Groq API Key...';
-    // Load existing key for this provider
-    apiKeyInput.value = provider === 'gemini' ? currentSettings.geminiKey : currentSettings.groqKey;
-  } else if (provider === 'ollama') {
-    ollamaUrlSection.classList.remove('hidden');
-    ollamaUrlInput.value = currentSettings.ollamaUrl;
-  }
-}
-
-async function handleSaveConfig() {
-  const provider = modelSelector.value;
-  currentSettings.provider = provider;
-
-  if (provider === 'gemini') currentSettings.geminiKey = apiKeyInput.value.trim();
-  if (provider === 'groq') currentSettings.groqKey = apiKeyInput.value.trim();
-  if (provider === 'ollama') currentSettings.ollamaUrl = ollamaUrlInput.value.trim();
-
-  try {
-    await chrome.storage.local.set({ extensionSettings: currentSettings });
-    showSettingsStatus('Configuration saved!', 'success');
-    setTimeout(() => toggleSettings(), 1200);
-  } catch (error) {
-    showSettingsStatus('Failed to save settings.', 'error');
-  }
-}
-
 async function loadSettings() {
   try {
     const result = await chrome.storage.local.get(['extensionSettings']);
     if (result.extensionSettings) {
       currentSettings = { ...currentSettings, ...result.extensionSettings };
+      
+      // Auto-migrate old users to groq if they had gemini/ollama selected
+      if (['gemini', 'ollama'].includes(currentSettings.provider)) {
+        currentSettings.provider = 'groq';
+        await chrome.storage.local.set({ extensionSettings: currentSettings });
+      }
+      
       modelSelector.value = currentSettings.provider;
     }
-    updateSettingsVisibility();
   } catch (error) {
     console.error('Failed to load settings:', error);
   }
@@ -267,22 +237,12 @@ async function getTabs() {
 
 // --- Send Tabs to Backend for Analysis ---
 async function analyzeTabs(tabs) {
-  const headers = {
-    'Content-Type': 'application/json',
-    'x-model-type': currentSettings.provider
-  };
-
-  if (currentSettings.provider === 'gemini' && currentSettings.geminiKey) {
-    headers['x-api-key'] = currentSettings.geminiKey;
-  } else if (currentSettings.provider === 'groq' && currentSettings.groqKey) {
-    headers['x-api-key'] = currentSettings.groqKey;
-  } else if (currentSettings.provider === 'ollama' && currentSettings.ollamaUrl) {
-    headers['x-ollama-url'] = currentSettings.ollamaUrl;
-  }
-
   const response = await fetch(`${BACKEND_URL}/analyze`, {
     method: 'POST',
-    headers: headers,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-model-type': currentSettings.provider
+    },
     body: JSON.stringify({ tabs })
   });
 

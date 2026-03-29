@@ -1,25 +1,15 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- Config ---
-const MODEL_TYPE = process.env.MODEL_TYPE || 'gemini'; // options: 'gemini', 'ollama', 'groq', 'fallback'
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3';
+const MODEL_TYPE = process.env.MODEL_TYPE || 'groq'; // options: 'groq', 'keywords'
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-// --- AI Setup (Primary) ---
-let genAI = null;
-let model = null;
-
-if (MODEL_TYPE === 'gemini' && GEMINI_API_KEY && GEMINI_API_KEY !== 'your_api_key_here') {
-  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-  model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+if (!GROQ_API_KEY || GROQ_API_KEY === 'your_api_key_here') {
+  console.warn('⚠️ GROQ_API_KEY is not set in .env. AI grouping will fail and fallback to keyword matching.');
 }
 
 app.use(cors());
@@ -58,9 +48,7 @@ app.get('/categories', (req, res) => {
 app.post('/analyze', async (req, res) => {
   try {
     const { tabs } = req.body;
-    const requestModelType = req.headers['x-model-type']; // gemini, groq, ollama, keywords
-    const requestKey = req.headers['x-api-key'];
-    const requestOllamaUrl = req.headers['x-ollama-url'];
+    const requestModelType = req.headers['x-model-type']; // groq, keywords
 
     if (!tabs || !Array.isArray(tabs)) {
       return res.status(400).json({ error: 'Invalid request: "tabs" must be an array' });
@@ -70,33 +58,20 @@ app.post('/analyze', async (req, res) => {
       return res.json({ groups: [], close_tabs: [] });
     }
 
-    // Determine target model for this request
     const activeModelType = requestModelType || MODEL_TYPE;
     let analysis;
 
-    console.log(`  🔍 Analyzing with mode: ${activeModelType} ${requestKey ? '(User Key)' : '(Server Key)'}`);
+    console.log(`  🔍 Analyzing with mode: ${activeModelType}`);
 
     try {
-      if (activeModelType === 'gemini') {
-        const apiKeyToUse = requestKey || GEMINI_API_KEY;
-        if (apiKeyToUse && apiKeyToUse !== 'your_api_key_here') {
-          const tempGenAI = new GoogleGenerativeAI(apiKeyToUse.trim());
-          const geminiModel = tempGenAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-          analysis = await analyzeWithAI(tabs, geminiModel);
+      if (activeModelType === 'groq') {
+        if (GROQ_API_KEY && GROQ_API_KEY !== 'your_api_key_here') {
+          analysis = await analyzeWithGroq(tabs, GROQ_API_KEY.trim());
         } else {
-          throw new Error('Gemini API key not configured');
+          throw new Error('Groq API key not configured in backend .env');
         }
-      } else if (activeModelType === 'groq') {
-        const apiKeyToUse = requestKey || GROQ_API_KEY;
-        if (apiKeyToUse && apiKeyToUse !== 'your_api_key_here') {
-          analysis = await analyzeWithGroq(tabs, apiKeyToUse.trim());
-        } else {
-          throw new Error('Groq API key not configured');
-        }
-      } else if (activeModelType === 'ollama') {
-        const urlToUse = requestOllamaUrl || OLLAMA_URL;
-        analysis = await analyzeWithOllama(tabs, urlToUse);
       } else {
+        console.log('  🔍 Falling back to local keyword engine.');
         analysis = analyzeWithKeywords(tabs);
       }
     } catch (aiError) {
@@ -114,114 +89,10 @@ app.post('/analyze', async (req, res) => {
 });
 
 // ============================================================
-//  AI-POWERED ANALYSIS (Gemini)
+//  GROQ (Cloud Open Source Engine)
 // ============================================================
 
 const CATEGORIES = ['Study', 'Shopping', 'Social', 'Work', 'Entertainment', 'AI Tools', 'Other'];
-
-async function analyzeWithAI(tabs, targetModel) {
-  const tabList = tabs.map((tab, i) =>
-    `${i + 1}. [id:${tab.id}] Title: "${tab.title}" | URL: ${tab.url}`
-  ).join('\n');
-
-  const prompt = `You are a browser tab classifier. Analyze the following browser tabs and return a JSON object.
-
-RULES:
-- Analyze the tabs and create EXACTLY 4 dynamic categories that best group them based on their content (e.g., "Research", "Development", "Media", "Admin"). You decide the best names.
-- Classify each tab into exactly ONE of your 4 created categories based on its title AND URL context.
-- "AI Tools" (ChatGPT, Gemini, Claude) should be grouped logically.
-- YouTube, Reddit, etc. can be in any category depending on content type.
-
-CLOSE SUGGESTIONS:
-- Flag tabs that are low-value: login/signup pages, empty carts, checkout pages, cookie consent, captcha, reset password, unsubscribe, promotional/ad pages.
-- Do NOT flag useful pages as closeable.
-
-TABS:
-${tabList}
-
-Respond ONLY with valid JSON in this exact format, no markdown fences:
-{
-  "groups": [
-    {
-      "name": "Category Name",
-      "summary": "Brief 1-line description of this group",
-      "tab_ids": [1, 2, 3]
-    }
-  ],
-  "close_tab_ids": [4, 5]
-}
-
-Use the actual tab IDs (from [id:X]), not the line numbers. Only include categories that have tabs.`;
-
-  const result = await targetModel.generateContent(prompt);
-  const responseText = result.response.text();
-
-  // Parse JSON from response (strip markdown fences if model adds them)
-  const jsonStr = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-  const parsed = JSON.parse(jsonStr);
-
-  // Map AI response back to tab objects
-  const tabMap = new Map(tabs.map(t => [t.id, t]));
-  const groups = [];
-
-  for (const group of parsed.groups) {
-    const groupTabs = (group.tab_ids || [])
-      .map(id => tabMap.get(id))
-      .filter(Boolean);
-
-    if (groupTabs.length > 0) {
-      groups.push({
-        name: group.name,
-        summary: group.summary,
-        tabs: groupTabs
-      });
-    }
-  }
-
-  return {
-    groups,
-    close_tabs: parsed.close_tab_ids || [],
-    total_tabs: tabs.length,
-    mode: 'ai-gemini'
-  };
-}
-
-// ============================================================
-//  OLLAMA (Local) ANALYSIS
-// ============================================================
-
-async function analyzeWithOllama(tabs, targetUrl) {
-  const tabList = tabs.map((tab, i) =>
-    `${i + 1}. [id:${tab.id}] Title: "${tab.title}" | URL: ${tab.url}`
-  ).join('\n');
-
-  const prompt = `Analyze these browser tabs and return ONLY a JSON response.
-RULES: Analyze the tabs and create EXACTLY 4 dynamic categories that best group them. Classify each tab into one of your 4 categories.
-${tabList}
-JSON Format: {"groups": [{"name": "Created Category Name", "summary": "1-line desc", "tab_ids": [id1, id2]}], "close_tab_ids": [id3]}`;
-
-  const response = await fetch(targetUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: OLLAMA_MODEL,
-      prompt: prompt,
-      stream: false,
-      format: 'json'
-    })
-  });
-
-  if (!response.ok) throw new Error(`Ollama error: ${response.statusText}`);
-
-  const data = await response.json();
-  const parsed = typeof data.response === 'string' ? JSON.parse(data.response) : data.response;
-
-  return processAIResult(tabs, parsed, 'ai-ollama');
-}
-
-// ============================================================
-//  GROQ (Cloud Open Source) ANALYSIS
-// ============================================================
 
 async function analyzeWithGroq(tabs, targetApiKey) {
   const tabList = tabs.map((tab, i) =>

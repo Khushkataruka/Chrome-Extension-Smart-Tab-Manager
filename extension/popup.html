@@ -37,37 +37,17 @@
         <div class="settings-section">
           <label for="modelSelector">Model Provider</label>
           <select id="modelSelector" class="form-select">
-            <option value="keywords">Keyword Matcher (Local)</option>
-            <option value="gemini">Google Gemini</option>
-            <option value="groq">Groq (Open Source Cloud)</option>
-            <option value="ollama">Ollama (Local AI)</option>
+            <option value="groq">AI Powered Grouping</option>
+            <option value="keywords">Keyword Matching (Local/Fast)</option>
           </select>
         </div>
 
-        <div id="apiKeySection" class="settings-section hidden">
-          <label for="apiKey">API Key</label>
-          <div class="input-group">
-            <input type="password" id="apiKey" placeholder="Enter API Key...">
-          </div>
-        </div>
-
-        <div id="ollamaUrlSection" class="settings-section hidden">
-          <label for="ollamaUrl">Ollama Server URL</label>
-          <div class="input-group">
-            <input type="text" id="ollamaUrl" placeholder="http://localhost:11434/api/generate">
-          </div>
-        </div>
-
-        <div class="settings-actions">
-          <button id="saveApiKeyBtn" class="btn btn-primary btn-sm">Save Configuration</button>
-        </div>
-        
-        <p class="help-text">Settings are stored locally in your browser.</p>
+        <p class="help-text" style="margin-top: 8px;">Analysis mode saves automatically.</p>
         <div id="settingsStatus" class="status-message hidden"></div>
       </div>
     </div>
     <div style="text-align: center; margin-bottom: 14px; font-size: 11.5px; color: var(--text-muted); opacity: 0.9;">
-      💡 Tip: Click the <strong style="color: var(--text-primary);">⚙️ Gear icon</strong> above to switch AI (Gemini, Groq, Ollama)
+      💡 Tip: Click the <strong style="color: var(--text-primary);">⚙️ Gear icon</strong> above to switch to fast Keyword mode
     </div>
 
     <div class="actions">
