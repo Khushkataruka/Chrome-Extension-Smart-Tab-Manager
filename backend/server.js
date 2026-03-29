@@ -126,23 +126,11 @@ async function analyzeWithAI(tabs, targetModel) {
 
   const prompt = `You are a browser tab classifier. Analyze the following browser tabs and return a JSON object.
 
-CATEGORIES: ${CATEGORIES.join(', ')}
-
 RULES:
-- Classify each tab into exactly ONE category based on its title AND URL context.
-- "AI Tools" = ChatGPT, Gemini, Claude, Ollama, Copilot, Perplexity, or any AI/LLM tool.
-- YouTube, Reddit, etc. can be ANY category depending on content:
-  - "YouTube - React Tutorial" → Study
-  - "YouTube - Lo-fi Beats" → Entertainment  
-  - "YouTube - Elon Musk Interview" → Entertainment
-  - "Reddit - r/learnprogramming" → Study
-  - "Reddit - r/memes" → Entertainment
-- "Study" = tutorials, documentation, learning platforms, programming Q&A, research.
-- "Work" = email, docs, project management, meetings, design tools.
-- "Shopping" = e-commerce, product pages, carts.
-- "Social" = social media for networking/sharing (Instagram, Twitter/X, Facebook, LinkedIn).
-- "Entertainment" = streaming, music, gaming, casual browsing.
-- "Other" = anything that doesn't clearly fit above.
+- Analyze the tabs and create EXACTLY 4 dynamic categories that best group them based on their content (e.g., "Research", "Development", "Media", "Admin"). You decide the best names.
+- Classify each tab into exactly ONE of your 4 created categories based on its title AND URL context.
+- "AI Tools" (ChatGPT, Gemini, Claude) should be grouped logically.
+- YouTube, Reddit, etc. can be in any category depending on content type.
 
 CLOSE SUGGESTIONS:
 - Flag tabs that are low-value: login/signup pages, empty carts, checkout pages, cookie consent, captcha, reset password, unsubscribe, promotional/ad pages.
@@ -208,9 +196,9 @@ async function analyzeWithOllama(tabs, targetUrl) {
   ).join('\n');
 
   const prompt = `Analyze these browser tabs and return ONLY a JSON response.
-CATEGORIES: ${CATEGORIES.join(', ')}
+RULES: Analyze the tabs and create EXACTLY 4 dynamic categories that best group them. Classify each tab into one of your 4 categories.
 ${tabList}
-JSON Format: {"groups": [{"name": "Category Name", "summary": "1-line desc", "tab_ids": [id1, id2]}], "close_tab_ids": [id3]}`;
+JSON Format: {"groups": [{"name": "Created Category Name", "summary": "1-line desc", "tab_ids": [id1, id2]}], "close_tab_ids": [id3]}`;
 
   const response = await fetch(targetUrl, {
     method: 'POST',
@@ -243,8 +231,8 @@ async function analyzeWithGroq(tabs, targetApiKey) {
   // Use more modern Groq model
   const modelToUse = 'llama-3.3-70b-versatile';
 
-  const prompt = `Classify these tabs into categories: ${CATEGORIES.join(', ')}. Return JSON only.
-Format: {"groups": [{"name": "Category", "summary": "desc", "tab_ids": [ids]}], "close_tab_ids": [ids]}
+  const prompt = `You are a tab manager. Analyze these tabs and create EXACTLY 4 dynamic categories to best organize them based on content. Return JSON only.
+Format: {"groups": [{"name": "Created Category Name", "summary": "desc", "tab_ids": [ids]}], "close_tab_ids": [ids]}
 Tabs:
 ${tabList}`;
 
