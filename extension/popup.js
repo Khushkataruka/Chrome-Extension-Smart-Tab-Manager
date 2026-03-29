@@ -174,13 +174,12 @@ async function handleAnalyze() {
 
         // Retain only valid tabs in the merged structure
         for (const group of cachedAnalysis.groups || []) {
-          const validIds = (group.tab_ids || []).filter(id => validCachedTabIds.has(id));
-          if (validIds.length > 0) {
+          const validTabs = (group.tabs || []).filter(t => validCachedTabIds.has(t.id));
+          if (validTabs.length > 0) {
             mergedAnalysis.groups.push({
               name: group.name,
               summary: group.summary,
-              tab_ids: validIds,
-              tabs: (group.tabs || []).filter(t => validIds.includes(t.id))
+              tabs: validTabs
             });
           }
         }
@@ -205,7 +204,6 @@ async function handleAnalyze() {
       for (const newGroup of newAnalysis.groups || []) {
         const existingGroup = analysis.groups.find(g => g.name === newGroup.name);
         if (existingGroup) {
-          existingGroup.tab_ids.push(...(newGroup.tab_ids || []));
           existingGroup.tabs.push(...(newGroup.tabs || []));
         } else {
           analysis.groups.push(newGroup);
@@ -325,16 +323,16 @@ function createGroupElement(group) {
         <span class="group-name">${escapeHtml(group.name)}</span>
         <span class="group-count">${tabCount} tab${tabCount !== 1 ? 's' : ''}</span>
       </div>
-      <div style="display: flex; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 6px;">
         <button class="btn-small group-tabs-btn" data-group-name="${escapeHtml(group.name)}">
           <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor">
             <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM14 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" />
           </svg>
-          Group in Browser
+          Group
         </button>
-        <button class="close-group-btn" title="Close all tabs in this group">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/>
+        <button class="btn-small close-group-btn" title="Close all tabs in this group" style="padding: 4px 6px; color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg);">
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
           </svg>
         </button>
       </div>
@@ -487,12 +485,10 @@ async function handleMoveTab(tabId, sourceGroupName, targetGroupName) {
       const tabObj = sourceGroup.tabs.find(t => t.id === tabId);
       if (tabObj) {
         // Remove from source
-        sourceGroup.tab_ids = sourceGroup.tab_ids.filter(id => id !== tabId);
         sourceGroup.tabs = sourceGroup.tabs.filter(t => t.id !== tabId);
         
         // Add to target
-        if (!targetGroup.tab_ids.includes(tabId)) {
-          targetGroup.tab_ids.push(tabId);
+        if (!targetGroup.tabs.some(t => t.id === tabId)) {
           targetGroup.tabs.push(tabObj);
         }
 
