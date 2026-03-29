@@ -156,7 +156,66 @@ async function handleAnalyze() {
     tabBadge.textContent = `${tabs.length} tab${tabs.length !== 1 ? 's' : ''}`;
     tabBadge.classList.remove('hidden');
 
-    const analysis = await analyzeTabs(tabs);
+    let validCachedTabIds = new Set();
+    let cachedAnalysis = null;
+    let mergedAnalysis = { groups: [], close_tabs: [], total_tabs: 0 };
+
+    try {
+      const session = await chrome.storage.session.get(['cachedAnalysis', 'cachedAllTabs']);
+      if (session.cachedAnalysis && session.cachedAllTabs) {
+        cachedAnalysis = session.cachedAnalysis;
+        const cachedTabsMap = new Map(session.cachedAllTabs.map(t => [t.id, t.url]));
+
+        tabs.forEach(t => {
+          if (cachedTabsMap.has(t.id) && cachedTabsMap.get(t.id) === t.url) {
+            validCachedTabIds.add(t.id);
+          }
+        });
+
+        // Retain only valid tabs in the merged structure
+        for (const group of cachedAnalysis.groups || []) {
+          const validIds = (group.tab_ids || []).filter(id => validCachedTabIds.has(id));
+          if (validIds.length > 0) {
+            mergedAnalysis.groups.push({
+              name: group.name,
+              summary: group.summary,
+              tab_ids: validIds,
+              tabs: (group.tabs || []).filter(t => validIds.includes(t.id))
+            });
+          }
+        }
+        mergedAnalysis.close_tabs = (cachedAnalysis.close_tabs || []).filter(id => validCachedTabIds.has(id));
+      }
+    } catch (err) {
+      console.warn('Session cache unavailable:', err);
+    }
+
+    const tabsToAnalyze = tabs.filter(t => !validCachedTabIds.has(t.id));
+    let analysis = mergedAnalysis;
+
+    if (tabsToAnalyze.length > 0) {
+      console.log(`Analyzing ${tabsToAnalyze.length} new/changed tabs...`);
+      const newAnalysis = await analyzeTabs(tabsToAnalyze);
+      analysis.mode = newAnalysis.mode || 'mixed';
+      
+      // Merge new close_tabs
+      analysis.close_tabs.push(...(newAnalysis.close_tabs || []));
+      
+      // Merge new groups
+      for (const newGroup of newAnalysis.groups || []) {
+        const existingGroup = analysis.groups.find(g => g.name === newGroup.name);
+        if (existingGroup) {
+          existingGroup.tab_ids.push(...(newGroup.tab_ids || []));
+          existingGroup.tabs.push(...(newGroup.tabs || []));
+        } else {
+          analysis.groups.push(newGroup);
+        }
+      }
+    } else {
+      console.log('All tabs loaded from cache. No new analysis needed.');
+    }
+
+    analysis.total_tabs = tabs.length;
 
     displayResults(analysis);
 
@@ -266,25 +325,69 @@ function createGroupElement(group) {
         <span class="group-name">${escapeHtml(group.name)}</span>
         <span class="group-count">${tabCount} tab${tabCount !== 1 ? 's' : ''}</span>
       </div>
-      <button class="btn-small group-tabs-btn" data-group-name="${escapeHtml(group.name)}">
-        <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM14 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" />
-        </svg>
-        Group in Browser
-      </button>
+      <div style="display: flex; align-items: center;">
+        <button class="btn-small group-tabs-btn" data-group-name="${escapeHtml(group.name)}">
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM14 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" />
+          </svg>
+          Group in Browser
+        </button>
+        <button class="close-group-btn" title="Close all tabs in this group">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <p class="group-summary">${escapeHtml(group.summary)}</p>
-    <ul class="tab-list">
-      ${group.tabs ? group.tabs.map(tab => createTabItem(tab)).join('') : ''}
+    <ul class="tab-list" data-group="${escapeHtml(group.name)}">
+      ${group.tabs ? group.tabs.map(tab => createTabItem(tab, group.name)).join('') : ''}
     </ul>
   `;
 
-  // Add click-to-navigate for each tab item
+  // Add click-to-navigate and drag events for each tab item
   groupEl.querySelectorAll('.tab-item').forEach((item, index) => {
-    if (group.tabs && group.tabs[index]) {
-      item.addEventListener('click', () => switchToTab(group.tabs[index].id));
+    const currentTab = group.tabs && group.tabs[index];
+    if (currentTab) {
+      item.addEventListener('click', () => switchToTab(currentTab.id));
+      
+      item.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({ tabId: currentTab.id, sourceGroup: group.name }));
+        setTimeout(() => item.classList.add('dragging'), 10);
+      });
+      
+      item.addEventListener('dragend', () => {
+        item.classList.remove('dragging');
+        document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      });
     }
   });
+
+  // Add drop listeners to the tab list container
+  const tabListEl = groupEl.querySelector('.tab-list');
+  if (tabListEl) {
+    tabListEl.addEventListener('dragover', (e) => {
+      e.preventDefault(); // allow drop
+      tabListEl.classList.add('drag-over');
+    });
+
+    tabListEl.addEventListener('dragleave', () => {
+      tabListEl.classList.remove('drag-over');
+    });
+
+    tabListEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      tabListEl.classList.remove('drag-over');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data && data.tabId && data.sourceGroup !== group.name) {
+          handleMoveTab(data.tabId, data.sourceGroup, group.name);
+        }
+      } catch (err) {
+        console.error('Drop error:', err);
+      }
+    });
+  }
 
   // Add click handler for Grouping button
   const groupBtn = groupEl.querySelector('.group-tabs-btn');
@@ -293,6 +396,25 @@ function createGroupElement(group) {
       e.stopPropagation();
       const tabIds = group.tabs.map(t => t.id).filter(id => id !== undefined);
       handleGroupTabsInBrowser(tabIds, group.name, groupBtn);
+    });
+  }
+
+  // Add click handler for Close Group button
+  const closeGroupBtn = groupEl.querySelector('.close-group-btn');
+  if (closeGroupBtn) {
+    closeGroupBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const tabIds = group.tabs.map(t => t.id).filter(id => id !== undefined);
+      if (tabIds.length === 0) return;
+      
+      closeGroupBtn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;border-color:var(--danger) transparent var(--danger) transparent"></div>';
+      try {
+        await closeTabs(tabIds); // Use existing close tabs from background
+        handleRemoveGroupLocally(group.name);
+      } catch (err) {
+        showError(`Failed to close group: ${err.message}`);
+        closeGroupBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      }
     });
   }
 
@@ -337,17 +459,74 @@ function groupTabs(tabIds, groupName) {
   });
 }
 
-function createTabItem(tab) {
+function createTabItem(tab, groupName) {
   const isSuggestedClose = tabsToClose.includes(tab.id);
   const faviconUrl = tab.favIconUrl || getFaviconFallback(tab.url);
 
   return `
-    <li class="tab-item ${isSuggestedClose ? 'suggested-close' : ''}" title="${escapeHtml(tab.url || '')}">
+    <li class="tab-item ${isSuggestedClose ? 'suggested-close' : ''}" title="${escapeHtml(tab.url || '')}" draggable="true" data-tab-id="${tab.id}">
       <img class="tab-favicon" src="${escapeHtml(faviconUrl)}" alt="" onerror="this.style.display='none'">
       <span class="tab-title">${escapeHtml(tab.title || 'Untitled')}</span>
       ${isSuggestedClose ? '<span class="close-tag">Close</span>' : ''}
     </li>
   `;
+}
+
+// --- State Modifiers ---
+async function handleMoveTab(tabId, sourceGroupName, targetGroupName) {
+  try {
+    const session = await chrome.storage.session.get(['cachedAnalysis']);
+    let analysis = session.cachedAnalysis;
+    if (!analysis) return;
+
+    const sourceGroup = analysis.groups.find(g => g.name === sourceGroupName);
+    const targetGroup = analysis.groups.find(g => g.name === targetGroupName);
+
+    if (sourceGroup && targetGroup) {
+      // Find the tab object
+      const tabObj = sourceGroup.tabs.find(t => t.id === tabId);
+      if (tabObj) {
+        // Remove from source
+        sourceGroup.tab_ids = sourceGroup.tab_ids.filter(id => id !== tabId);
+        sourceGroup.tabs = sourceGroup.tabs.filter(t => t.id !== tabId);
+        
+        // Add to target
+        if (!targetGroup.tab_ids.includes(tabId)) {
+          targetGroup.tab_ids.push(tabId);
+          targetGroup.tabs.push(tabObj);
+        }
+
+        // Save state and silently re-render UI
+        await chrome.storage.session.set({ cachedAnalysis: analysis });
+        displayResults(analysis);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to move tab state:', err);
+  }
+}
+
+async function handleRemoveGroupLocally(groupName) {
+  try {
+    const session = await chrome.storage.session.get(['cachedAnalysis']);
+    let analysis = session.cachedAnalysis;
+    if (!analysis) return;
+
+    // Remove the group entirely
+    analysis.groups = analysis.groups.filter(g => g.name !== groupName);
+    
+    await chrome.storage.session.set({ cachedAnalysis: analysis });
+    displayResults(analysis);
+    
+    // Also re-fetch global browser open tabs to update the overall tab count locally
+    const currentOpenTabs = await getTabs();
+    allTabs = currentOpenTabs;
+    tabBadge.textContent = `${allTabs.length} tab${allTabs.length !== 1 ? 's' : ''}`;
+    await chrome.storage.session.set({ cachedAllTabs: allTabs });
+    
+  } catch (err) {
+    console.error('Failed to update UI after closing group:', err);
+  }
 }
 
 function getFaviconFallback(url) {
